@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Carbon\Carbon;
+use Illuminate\Support\Str;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 
@@ -29,60 +30,33 @@ class CompareTransactions extends Command
      */
     public function handle()
     {
-        $nubankFiles = Storage::allFiles('json/NuBank');
-        $mobillsFiles = Storage::allFiles('json/Mobills');
-
-        $nubankTransactions = collect();
-        $mobillsTransactions = collect();
-
-        foreach ($nubankFiles as $file) {
-            $fileTransactions = collect(json_decode(Storage::get($file), true));
-
-            foreach ($fileTransactions as $transaction) {
-                $date = Carbon::createFromFormat('d/m/Y', $transaction['Data']);
-
-                $transaction['timestamp'] = $date->getTimestamp();
-
-                $nubankTransactions->push($transaction);
-            }
-        }
-
-        foreach ($mobillsFiles as $file) {
-            $fileTransactions = collect(json_decode(Storage::get($file), true));
-
-            foreach ($fileTransactions as $transaction) {
-                $date = Carbon::createFromFormat('d/m/Y', $transaction['Data']);
-
-                $transaction['timestamp'] = $date->getTimestamp();
-
-                $mobillsTransactions->push($transaction);
-            }
-        }
-
-        $nubankTransactions = $nubankTransactions->sortBy('timestamp');
-        $mobillsTransactions = $mobillsTransactions->sortBy('timestamp');
-
-        $nubankTransactions->each(function ($transaction) use ($mobillsTransactions) {
-            $mobillsTransactions->each(function ($mobillsTransaction) use ($transaction) {
-                if ($transaction['timestamp'] == $mobillsTransaction['timestamp']) {
-                    if ($transaction['Valor'] === $mobillsTransaction['Valor']) {
-                        $this->info('Nubank: ' . $transaction['Descricao']);
-                        $this->info('Mobills: ' . $mobillsTransaction['Descricao']);
-                        $this->info($transaction['timestamp']);
-                        $this->info($transaction['Valor']);
-                        $this->info($mobillsTransaction['Valor']);
-                        $this->info('------------------------------------');
-                        $this->output->newLine(3);
-
-                        $transaction->delete();
-                        $mobillsTransaction->delete();
-                    }
-                }
-            });
+        $nubankFiles = collect(Storage::allFiles('json/NuBank'))->filter(function ($file) {
+            return str_contains($file, 'All');
+        });
+        $mobillsFiles = collect(Storage::allFiles('json/Mobills'))->filter(function ($file) {
+            return str_contains($file, 'All');
         });
 
-        dd($nubankTransactions, $mobillsTransactions);
+        $nubankFiles->each(function ($file) {
+            $transaction = $this->setTransactionIds($file);
+
+            dd($transaction);
+        });
+
+
+
+        dd($nubankFiles, $mobillsFiles);
 
         return 0;
+    }
+
+    private function setTransactionIds($file)
+    {
+        $transactions = collect(json_decode(Storage::get($file), true));
+        $transactions = $transactions->map(function ($transaction) {
+            $transaction['id'] = Str::uuid()->toString();
+            return $transaction;
+        });
+        return $transactions;
     }
 }
