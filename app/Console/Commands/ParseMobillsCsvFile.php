@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use Illuminate\Support\Str;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 
@@ -30,7 +31,14 @@ class ParseMobillsCsvFile extends Command
     {
         $this->info('Started parsing mobills csv file');
 
-        $files = Storage::allFiles('csv/Mobills');
+        $files = collect(Storage::allFiles('csv/Mobills'))->filter(function ($file) {
+            return str_contains($file, '.csv');
+        });
+
+        $json = collect();
+        $yearly = collect();
+        $monthly = collect();
+        $daily = collect();
 
         foreach ($files as $filePath) {
             $file = Storage::get($filePath);
@@ -48,20 +56,61 @@ class ParseMobillsCsvFile extends Command
 
             $lines = array_slice($lines, 1);
 
-            $json = [];
+            $transactions = collect();
 
             foreach ($lines as $line) {
                 $data = explode(';', str_replace('"', '', $line));
 
                 $data = array_combine($headers, $data);
 
-                $json[] = $data;
+                $date = \DateTime::createFromFormat('d/m/Y', $data['Data']);
+                $value = str_replace(',', '.', $data['Valor']);
+                $description = $data['Descricao'];
+
+                $transactions->push([
+                    'date' => $date,
+                    'value' => $value,
+                    'description' => $description,
+                ]);
             }
 
-            Storage::put('json/Mobills/' . basename($filePath, '.csv') . '.json', json_encode($json));
+            $transactions = $transactions->each(function ($transaction) use (&$json, &$yearly, &$monthly, &$daily) {
+                $day = $transaction['date']->format('d');
+                $month = $transaction['date']->format('M');
+                $year = $transaction['date']->format('Y');
+
+                $transactionData = [
+                    'id' => Str::uuid()->toString(),
+                    'date' => $transaction['date']->format('Y-m-d'),
+                    'value' => $transaction['value'],
+                    'description' => $transaction['description'],
+                ];
+
+                if (!$yearly->has($year)) {
+                    $yearly->put($year, collect());
+                }
+
+                if (!$monthly->has($year . '_-_' . $month)) {
+                    $monthly->put($year . '_-_' . $month, collect());
+                }
+
+                if (!$daily->has($year . '_-_' . $month . '_-_' . $day)) {
+                    $daily->put($year . '_-_' . $month . '_-_' . $day, collect());
+                }
+
+                $yearly->get($year)->push($transactionData);
+                $monthly->get($year . '_-_' . $month)->push($transactionData);
+                $daily->get($year . '_-_' . $month . '_-_' . $day)->push($transactionData);
+                $json->push($transactionData);
+            });
         }
 
-        $this->info('Finished parsing mobills csv file');
+        Storage::put('json/Mobills/Mobills_Transactions_-_All.json', $json->toJson());
+        Storage::put('json/Mobills/Mobills_Transactions_-_Yearly.json', $yearly->toJson());
+        Storage::put('json/Mobills/Mobills_Transactions_-_Monthly.json', $monthly->toJson());
+        Storage::put('json/Mobills/Mobills_Transactions_-_Daily.json', $daily->toJson());
+
+        $this->info('Finished parsing Mobills csv files');
 
         return Command::SUCCESS;
     }
